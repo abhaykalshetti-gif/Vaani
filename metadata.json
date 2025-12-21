@@ -1,0 +1,7 @@
+{
+  "name": "Vaani",
+  "description": "A universal Indian multilingual voice conversational AI agent that leads conversations, collects data, and generates reports.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
