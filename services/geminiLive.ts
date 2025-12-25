@@ -11,6 +11,8 @@ interface LiveConfig {
   onInterrupted: () => void;
 }
 
+const NOISE_GATE_THRESHOLD = 0.0015; // Slightly more sensitive
+
 export class GeminiLiveService {
   private sessionPromise: Promise<any> | null = null;
   private inputAudioContext: AudioContext | null = null;
@@ -33,14 +35,15 @@ export class GeminiLiveService {
       this.inputAudioContext = new AudioContextClass({ sampleRate: 16000 });
       this.outputAudioContext = new AudioContextClass({ sampleRate: 24000 });
 
-      if (this.inputAudioContext?.state === 'suspended') await this.inputAudioContext.resume();
-      if (this.outputAudioContext?.state === 'suspended') await this.outputAudioContext.resume();
+      // Explicitly resume to satisfy browser security
+      await this.inputAudioContext.resume();
+      await this.outputAudioContext.resume();
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
-          echoCancellation: { ideal: true },
-          noiseSuppression: { ideal: true },
-          autoGainControl: { ideal: true },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
           channelCount: 1,
           sampleRate: 16000
         } 
@@ -86,16 +89,23 @@ export class GeminiLiveService {
     if (!this.inputAudioContext) return;
 
     this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
-    // Use 1024 for lower latency and more frequent audio updates
     this.scriptProcessor = this.inputAudioContext.createScriptProcessor(1024, 1, 1);
 
     this.scriptProcessor.onaudioprocess = (e) => {
       if (!this.isConnected) return;
       const inputData = e.inputBuffer.getChannelData(0);
       
-      // Moderate gain to ensure voice clarity without amplifying background noise floor
+      let sum = 0;
       for (let i = 0; i < inputData.length; i++) {
-        inputData[i] = inputData[i] * 1.5; 
+        sum += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sum / inputData.length);
+
+      if (rms < NOISE_GATE_THRESHOLD) return;
+
+      const gainFactor = 2.5; 
+      for (let i = 0; i < inputData.length; i++) {
+        inputData[i] = inputData[i] * gainFactor; 
       }
       
       const pcmBlob = createPcmBlob(inputData);
@@ -118,35 +128,40 @@ export class GeminiLiveService {
       config.onInterrupted();
     }
 
-    const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-    if (base64Audio && this.outputAudioContext) {
-      const audioBuffer = await decodePcmToAudioBuffer(base64ToBytes(base64Audio), this.outputAudioContext, 24000, 1);
-      
-      const currentTime = this.outputAudioContext.currentTime;
-      // Precision lookahead to prevent gap/jitter
-      if (this.nextStartTime < currentTime) {
-        this.nextStartTime = currentTime + 0.05; 
+    // Search through all parts for audio data
+    const parts = message.serverContent?.modelTurn?.parts || [];
+    for (const part of parts) {
+      if (part.inlineData?.data && this.outputAudioContext) {
+        const audioBuffer = await decodePcmToAudioBuffer(
+          base64ToBytes(part.inlineData.data), 
+          this.outputAudioContext, 
+          24000, 
+          1
+        );
+        
+        const currentTime = this.outputAudioContext.currentTime;
+        if (this.nextStartTime < currentTime) {
+          this.nextStartTime = currentTime + 0.02; 
+        }
+        
+        const source = this.outputAudioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.outputAudioContext.destination);
+        source.addEventListener('ended', () => {
+          this.sources.delete(source);
+        });
+        
+        source.start(this.nextStartTime);
+        this.nextStartTime += audioBuffer.duration;
+        this.sources.add(source);
       }
-      
-      const source = this.outputAudioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.outputAudioContext.destination);
-      source.addEventListener('ended', () => {
-        this.sources.delete(source);
-      });
-      
-      source.start(this.nextStartTime);
-      this.nextStartTime += audioBuffer.duration;
-      this.sources.add(source);
     }
 
     if (message.serverContent?.outputTranscription) {
-      const text = message.serverContent.outputTranscription.text;
-      this.currentOutputTranscription += text;
+      this.currentOutputTranscription += message.serverContent.outputTranscription.text;
       config.onTranscript(this.currentOutputTranscription, false, false);
     } else if (message.serverContent?.inputTranscription) {
-      const text = message.serverContent.inputTranscription.text;
-      this.currentInputTranscription += text;
+      this.currentInputTranscription += message.serverContent.inputTranscription.text;
       config.onTranscript(this.currentInputTranscription, true, false);
     }
 
@@ -164,9 +179,7 @@ export class GeminiLiveService {
 
   public sendText(text: string) {
     this.sessionPromise?.then((session) => {
-      if (this.isConnected) {
-        session.sendRealtimeInput({ text });
-      }
+      if (this.isConnected) session.sendRealtimeInput({ text });
     });
   }
 

@@ -11,49 +11,36 @@ interface SessionProps {
   onEndSession: (session: SessionData) => void;
 }
 
-const SILENCE_TIMEOUT_MS = 20000; 
+const SILENCE_TIMEOUT_MS = 25000; 
 
 const getSystemInstruction = (config: AgentConfig) => {
   return `
-You are Vani, a specialized AI agent acting ONLY as: ${config.name}.
+You are Vani, a naturally sounding, empathetic human AI. You are NOT a robot reading a script.
 
-**AUDIO FOCUS PROTOCOL (STRICT)**:
-1. **PRIMARY SPEAKER ONLY**: You must focus exclusively on the primary speaker's voice. Ignore background chatter, distant voices, or environmental noise.
-2. **NOISE FILTERING**: If you hear faint or incoherent audio that doesn't sound like a direct address from the user, treat it as silence and do not respond.
-3. **TRANCRIPTION CLEANING**: Only acknowledge clearly spoken words and phrases. Do not attempt to interpret background sounds as user commands.
+**HUMAN CONVERSATION GUIDELINES**:
+1. **BE VERBAL**: Use conversational fillers like "Hmm," "I see," "Oh, interesting," or "Let me think..." to make the synthesis feel natural.
+2. **SYNTHESIZE DYNAMICALLY**: Your "Knowledge Base" is your internal memory. Do not read it word-for-word. Explain things as a human would, summarizing and focusing on the user's specific question.
+3. **ACTIVE LISTENING**: Latch onto the user's words. If you hear noise, ignore it. If the user is loud, you are direct. If they are soft, be gentle.
+4. **VIBRANT PERSONALITY**: Act as: ${config.name}. Your tone should be ${config.contextAndTone}.
+5. **CONCISE**: Keep your spoken responses to 1-3 sentences. Don't monolog.
 
-**VOCAL DELIVERY PROTOCOL**:
-1. **MODERATE PACE**: Speak at a steady, moderate speed. Do not rush your words. 
-2. **NATURAL PAUSES**: Insert a brief, natural pause (approx 0.5s) between sentences to maintain conversational flow and improve user transcription accuracy.
-3. **CLEAR ENUNCIATION**: Pronounce every word distinctly. 
-
-**CONVERSATION DYNAMICS**:
-1. **ZERO QUESTION REPETITION**: Never ask the same question twice. Move through your "Checklist" sequentially.
-2. **EXTREME OUT-OF-SCOPE (OOS) VARIETY**: Pivot uniquely every single time the user wanders off-topic. Never repeat a pivot phrase.
-3. **KNOWLEDGE BASE**: Use the provided data as your source of truth.
-4. **BRIEF**: Maximum 2 sentences per response.
-
-**OBJECTIVE**: 
-${config.objective}
+**SESSION PARAMETERS**:
+- **YOUR GOAL**: ${config.objective}
+- **TOPICS**: Weave these into the chat: ${config.questions.join(', ')}.
+- **LANGUAGE**: Speak naturally in ${config.language}.
 
 **KNOWLEDGE BASE**:
 ${config.knowledgeBase}
 
-**CHECKLIST (USE EACH ONCE)**:
-${config.questions.join('\n- ')}
-
-**LANGUAGE**: ${config.language} (Default)
-**TONE**: ${config.contextAndTone}
-
-**STARTING LINE**:
-"${config.firstQuestion}"
+**YOUR FIRST WORDS**:
+Say clearly and warmly: "${config.firstQuestion}"
 `;
 };
 
 const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
   const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
   const [liveTranscript, setLiveTranscript] = useState<{ text: string, isUser: boolean } | null>(null);
-  const [status, setStatus] = useState<'connecting' | 'active' | 'analyzing' | 'error' | 'ended'>('connecting');
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'active' | 'analyzing' | 'error' | 'ended'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [timeLeft, setTimeLeft] = useState(600);
   const [textInput, setTextInput] = useState('');
@@ -85,7 +72,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
       const now = Date.now();
       if (now - lastInteractionTimestamp.current > SILENCE_TIMEOUT_MS) {
         if (liveService.current) {
-          liveService.current.sendText("(System Warning: The user has been silent for 20 seconds. Please re-engage the primary speaker with a unique, persona-driven prompt at a moderate pace.)");
+          liveService.current.sendText("(System: Check in with the user warmly, they've been silent for a while.)");
         }
         lastInteractionTimestamp.current = now; 
       }
@@ -94,57 +81,44 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
     return () => clearInterval(silenceInterval);
   }, [status]);
 
-  useEffect(() => {
+  const startSession = async () => {
+    setStatus('connecting');
     const service = new GeminiLiveService();
     liveService.current = service;
 
-    const init = async () => {
-      try {
-        await service.connect({
-          systemInstruction: getSystemInstruction(agentConfig),
-          onOpen: () => {
-            setStatus('active');
-            service.sendText(`System: Start Session. Moderate pace greeting: "${agentConfig.firstQuestion}"`);
-            lastInteractionTimestamp.current = Date.now();
-          },
-          onTranscript: (text, isUser, isFinal) => {
-            lastInteractionTimestamp.current = Date.now();
-
-            if (isFinal) {
-              setTranscript(prev => [...prev, {
-                speaker: isUser ? 'user' : 'ai',
-                text,
-                timestamp: Date.now()
-              }]);
-              setLiveTranscript(null);
-            } else {
-              setLiveTranscript({ text, isUser });
-            }
-          },
-          onInterrupted: () => {
+    try {
+      await service.connect({
+        systemInstruction: getSystemInstruction(agentConfig),
+        onOpen: () => {
+          setStatus('active');
+          lastInteractionTimestamp.current = Date.now();
+        },
+        onTranscript: (text, isUser, isFinal) => {
+          lastInteractionTimestamp.current = Date.now();
+          if (isFinal) {
+            setTranscript(prev => [...prev, { speaker: isUser ? 'user' : 'ai', text, timestamp: Date.now() }]);
             setLiveTranscript(null);
-            lastInteractionTimestamp.current = Date.now();
-          },
-          onClose: () => {
-            if (status !== 'analyzing') setStatus('ended');
-          },
-          // Fix: Corrected property name from 'onerror' to 'onError' to match the LiveConfig interface
-          onError: (err: any) => {
-            setErrorMsg(err.message || "Voice session lost connection.");
-            setStatus('error');
+          } else {
+            setLiveTranscript({ text, isUser });
           }
-        });
-      } catch (err: any) {
-        setErrorMsg(err.message || "Vaani engine initialization failed.");
-        setStatus('error');
-      }
-    };
-
-    init();
-    return () => { 
-      if (liveService.current) service.disconnect();
-    };
-  }, [agentConfig]);
+        },
+        onInterrupted: () => {
+          setLiveTranscript(null);
+          lastInteractionTimestamp.current = Date.now();
+        },
+        onClose: () => {
+          if (status !== 'analyzing') setStatus('ended');
+        },
+        onError: (err: any) => {
+          setErrorMsg(err.message || "Voice session lost connection.");
+          setStatus('error');
+        }
+      });
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to initialize Vaani engine.");
+      setStatus('error');
+    }
+  };
 
   const handleEndSession = async () => {
     setStatus('analyzing');
@@ -189,13 +163,53 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
     lastInteractionTimestamp.current = Date.now();
   };
 
+  if (status === 'idle') {
+    return (
+      <div className="flex flex-col h-[600px] items-center justify-center p-10 text-center bg-slate-900/50 backdrop-blur-xl rounded-[48px] border border-slate-800 animate-in zoom-in-95 duration-500">
+        <div className="w-24 h-24 bg-brand-500 rounded-full flex items-center justify-center mb-8 animate-pulse shadow-2xl shadow-brand-500/50">
+           <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+        </div>
+        <h2 className="text-3xl font-black text-white mb-4">Ready to speak with {agentConfig.name}?</h2>
+        <p className="text-slate-400 mb-8 max-w-md">Click below to enable your microphone and begin your voice conversation in {agentConfig.language}.</p>
+        <button 
+          onClick={startSession}
+          className="bg-brand-500 hover:bg-brand-400 text-white px-12 py-5 rounded-[24px] font-black text-xl shadow-xl transition-all hover:scale-105 active:scale-95"
+        >
+          Start Conversation
+        </button>
+      </div>
+    );
+  }
+
+  if (status === 'connecting') {
+    return (
+      <div className="flex h-[600px] items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin mx-auto"></div>
+          <p className="text-brand-400 font-black uppercase tracking-widest text-sm">Connecting to Vani AI...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-10 text-center">
+        <div className="text-red-500 text-6xl mb-6">⚠️</div>
+        <h2 className="text-2xl font-bold text-white mb-2">Connection Issue</h2>
+        <p className="text-slate-400 mb-8">{errorMsg}</p>
+        <button onClick={() => window.location.reload()} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold">Restart Session</button>
+      </div>
+    );
+  }
+
   if (status === 'analyzing') {
     return (
       <div className="flex flex-col h-full items-center justify-center space-y-10 p-10 text-center animate-in fade-in duration-700">
         <div className="w-24 h-24 border-4 border-brand-500/10 border-t-brand-500 rounded-full animate-spin"></div>
         <div className="space-y-4">
-          <h2 className="text-4xl font-black text-white tracking-tight">Vani is Processing</h2>
-          <p className="text-slate-400 text-lg">Finalizing your intelligent report...</p>
+          <h2 className="text-4xl font-black text-white tracking-tight">Vani is Thinking</h2>
+          <p className="text-slate-400 text-lg">Finalizing your conversation report...</p>
         </div>
       </div>
     );
@@ -213,7 +227,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
             <div className="flex items-center gap-2">
                <span className="text-[10px] font-black text-brand-400 bg-brand-400/10 px-2 py-0.5 rounded-md uppercase tracking-wider">{agentConfig.language}</span>
                <span className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1.5">
-                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Intelligent Capture
+                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Intelligent Audio Active
                </span>
             </div>
           </div>
@@ -280,7 +294,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
               type="text"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder={`Type a message instead...`}
+              placeholder={`Type a message...`}
               className="flex-1 bg-transparent px-8 py-4 text-white focus:outline-none placeholder:text-slate-600 text-lg"
               disabled={status !== 'active'}
             />
