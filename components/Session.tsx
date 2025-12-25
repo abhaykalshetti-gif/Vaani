@@ -15,25 +15,29 @@ const SILENCE_TIMEOUT_MS = 25000;
 
 const getSystemInstruction = (config: AgentConfig) => {
   return `
-You are Vani, a naturally sounding, empathetic human AI. You are NOT a robot reading a script.
+You are Vani, a highly focused and professional human-like AI assistant acting as: ${config.name}.
 
-**HUMAN CONVERSATION GUIDELINES**:
-1. **BE VERBAL**: Use conversational fillers like "Hmm," "I see," "Oh, interesting," or "Let me think..." to make the synthesis feel natural.
-2. **SYNTHESIZE DYNAMICALLY**: Your "Knowledge Base" is your internal memory. Do not read it word-for-word. Explain things as a human would, summarizing and focusing on the user's specific question.
-3. **ACTIVE LISTENING**: Latch onto the user's words. If you hear noise, ignore it. If the user is loud, you are direct. If they are soft, be gentle.
-4. **VIBRANT PERSONALITY**: Act as: ${config.name}. Your tone should be ${config.contextAndTone}.
-5. **CONCISE**: Keep your spoken responses to 1-3 sentences. Don't monolog.
+**STRICT TOPIC ADHERENCE PROTOCOL**:
+1. **TOPIC LOCK**: You MUST stay strictly on the topic of "${config.objective}". Do not deviate.
+2. **REJECTION OF IRRELEVANCE**: If the user asks a question or makes a comment unrelated to the objective or the topics listed below, you must politely but firmly bring the conversation back. Use phrases like: "I'd like to stay focused on our goal of ${config.objective}, let's get back to..."
+3. **CHECKLIST PRIORITY**: You must systematically cover these specific topics: ${config.questions.join(', ')}. Ensure each is addressed before ending.
+4. **NO HALLUCINATIONS**: Only use information provided in the Knowledge Base. If asked about something outside it, state that you don't have that information and stay on task.
+
+**HUMAN VOICE SYNTHESIS**:
+1. **CONVERSATIONAL BUT FOCUSED**: Use natural transitions and brief fillers (e.g., "Right," "I understand," "Got it") but immediately pivot back to the topic.
+2. **CONCISE RESPONSES**: Limit your speech to 1-2 sentences maximum. Do not wander or monolog.
+3. **SYNTHESIZE DYNAMICALLY**: Explain concepts from the Knowledge Base in your own words. Do not read the text verbatim.
 
 **SESSION PARAMETERS**:
-- **YOUR GOAL**: ${config.objective}
-- **TOPICS**: Weave these into the chat: ${config.questions.join(', ')}.
-- **LANGUAGE**: Speak naturally in ${config.language}.
+- **GOAL**: ${config.objective}
+- **TONE**: ${config.contextAndTone}
+- **LANGUAGE**: ${config.language} (Strictly speak in this language).
 
 **KNOWLEDGE BASE**:
 ${config.knowledgeBase}
 
-**YOUR FIRST WORDS**:
-Say clearly and warmly: "${config.firstQuestion}"
+**FIRST ACTION**:
+Start the conversation immediately with: "${config.firstQuestion}"
 `;
 };
 
@@ -72,7 +76,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
       const now = Date.now();
       if (now - lastInteractionTimestamp.current > SILENCE_TIMEOUT_MS) {
         if (liveService.current) {
-          liveService.current.sendText("(System: Check in with the user warmly, they've been silent for a while.)");
+          liveService.current.sendText("(System: The user is silent. Prompt them to stay on the specific topic of the session warmly.)");
         }
         lastInteractionTimestamp.current = now; 
       }
@@ -166,16 +170,16 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
   if (status === 'idle') {
     return (
       <div className="flex flex-col h-[600px] items-center justify-center p-10 text-center bg-slate-900/50 backdrop-blur-xl rounded-[48px] border border-slate-800 animate-in zoom-in-95 duration-500">
-        <div className="w-24 h-24 bg-brand-500 rounded-full flex items-center justify-center mb-8 animate-pulse shadow-2xl shadow-brand-500/50">
-           <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
+        <div className="w-24 h-24 bg-brand-500 rounded-full flex items-center justify-center mb-8 shadow-2xl shadow-brand-500/50">
+           <svg className="w-12 h-12 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
         </div>
-        <h2 className="text-3xl font-black text-white mb-4">Ready to speak with {agentConfig.name}?</h2>
-        <p className="text-slate-400 mb-8 max-w-md">Click below to enable your microphone and begin your voice conversation in {agentConfig.language}.</p>
+        <h2 className="text-3xl font-black text-white mb-4">Focus Mode: {agentConfig.name}</h2>
+        <p className="text-slate-400 mb-8 max-w-md">This agent is configured to be strictly topic-specific. Click below to begin your focused session.</p>
         <button 
           onClick={startSession}
           className="bg-brand-500 hover:bg-brand-400 text-white px-12 py-5 rounded-[24px] font-black text-xl shadow-xl transition-all hover:scale-105 active:scale-95"
         >
-          Start Conversation
+          Start Focused Chat
         </button>
       </div>
     );
@@ -186,7 +190,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
       <div className="flex h-[600px] items-center justify-center">
         <div className="text-center space-y-4">
           <div className="w-16 h-16 border-4 border-brand-500/20 border-t-brand-500 rounded-full animate-spin mx-auto"></div>
-          <p className="text-brand-400 font-black uppercase tracking-widest text-sm">Connecting to Vani AI...</p>
+          <p className="text-brand-400 font-black uppercase tracking-widest text-sm">Locking on Topic...</p>
         </div>
       </div>
     );
@@ -196,9 +200,9 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
     return (
       <div className="flex flex-col h-full items-center justify-center p-10 text-center">
         <div className="text-red-500 text-6xl mb-6">⚠️</div>
-        <h2 className="text-2xl font-bold text-white mb-2">Connection Issue</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">Connection Interrupted</h2>
         <p className="text-slate-400 mb-8">{errorMsg}</p>
-        <button onClick={() => window.location.reload()} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold">Restart Session</button>
+        <button onClick={() => window.location.reload()} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold">Try Again</button>
       </div>
     );
   }
@@ -208,8 +212,8 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
       <div className="flex flex-col h-full items-center justify-center space-y-10 p-10 text-center animate-in fade-in duration-700">
         <div className="w-24 h-24 border-4 border-brand-500/10 border-t-brand-500 rounded-full animate-spin"></div>
         <div className="space-y-4">
-          <h2 className="text-4xl font-black text-white tracking-tight">Vani is Thinking</h2>
-          <p className="text-slate-400 text-lg">Finalizing your conversation report...</p>
+          <h2 className="text-4xl font-black text-white tracking-tight">Vani is Processing</h2>
+          <p className="text-slate-400 text-lg">Synthesizing topic-specific insights...</p>
         </div>
       </div>
     );
@@ -227,7 +231,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
             <div className="flex items-center gap-2">
                <span className="text-[10px] font-black text-brand-400 bg-brand-400/10 px-2 py-0.5 rounded-md uppercase tracking-wider">{agentConfig.language}</span>
                <span className="text-[10px] text-slate-500 font-bold uppercase flex items-center gap-1.5">
-                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> Intelligent Audio Active
+                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span> Strict Focus Mode
                </span>
             </div>
           </div>
@@ -294,7 +298,7 @@ const Session: React.FC<SessionProps> = ({ agentConfig, onEndSession }) => {
               type="text"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder={`Type a message...`}
+              placeholder={`Type if you can't speak...`}
               className="flex-1 bg-transparent px-8 py-4 text-white focus:outline-none placeholder:text-slate-600 text-lg"
               disabled={status !== 'active'}
             />
